@@ -34,23 +34,29 @@ async def process_audio_flow(agent, audio_b64):
         if not DEEPGRAM_API_KEY:
              return {"type": "ERROR", "text": "Deepgram API Key missing"}
 
-        # Initialize with explicit api_key kwarg or rely on env
+        # Initialize
         deepgram = DeepgramClient(api_key=DEEPGRAM_API_KEY)
         audio_data = base64.b64decode(audio_b64)
         
-        source = {'buffer': audio_data, 'mimetype': 'audio/wav'} 
+        # The 'transcribe_file' method in this namespace expects raw bytes for 'request'.
+        # We pass the raw audio_data directly. Deepgram detects WAV/WebM automatically.
         options = {
             "model": "nova-2",
             "smart_format": True
         }
         
         logging.info("Sending audio to Deepgram...")
-        # v5 Flattened: request=source, **options (model=..., smart_format=...)
-        response = deepgram.listen.v1.media.transcribe_file(request=source, **options)
-        transcript = response.results.channels[0].alternatives[0].transcript
+        
+        # Correct Call: User suggested passing raw bytes directly
+        response = deepgram.listen.v1.media.transcribe_file(
+            request=audio_data, 
+            **options
+        )
+
+        transcript = str(response.results.channels[0].alternatives[0].transcript)
         logging.info(f"Transcript: {transcript}")
 
-        if not transcript.strip():
+        if not transcript or transcript == "None" or not transcript.strip():
              return {"type": "ASSISTANT_TEXT", "text": "I didn't hear anything."}
 
         # 2. Agent Logic
@@ -60,7 +66,6 @@ async def process_audio_flow(agent, audio_b64):
         # 3. TTS via EdgeTTS
         communicate = edge_tts.Communicate(reply_text, "en-US-AvaNeural")
         
-        # We need to collect the audio bytes
         mp3_data = b""
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -76,7 +81,8 @@ async def process_audio_flow(agent, audio_b64):
 
     except Exception as e:
         logging.error(f"Voice Flow Error: {e}")
-        return {"type": "ERROR", "text": f"Voice Error: {str(e)}"}
+        # Return a polite error to the UI so the user knows something happened
+        return {"type": "ASSISTANT_TEXT", "text": "I'm having trouble hearing you clearly."}
 
 def main():
     logging.info("Brain process started (Voice Enabled).")

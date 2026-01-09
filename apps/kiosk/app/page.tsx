@@ -1,275 +1,204 @@
-'use client';
+"use client";
 
-import { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Bot, User } from 'lucide-react';
+import { useState, useRef, useEffect } from "react";
+import { Mascot, MascotStatus } from "../components/Mascot";
+import { ChatBubble } from "../components/ChatBubble";
+import { Send, Mic, MicOff, Volume2 } from "lucide-react";
 
 interface Message {
     id: string;
-    role: 'user' | 'brain';
     text: string;
-    timestamp: number;
+    isUser: boolean;
+    isNew?: boolean;
 }
 
-export default function Home() {
+export default function HotelKiosk() {
     const [messages, setMessages] = useState<Message[]>([
         {
-            id: 'welcome',
-            role: 'brain',
-            text: 'Welcome to the Autonomous Hotel. How may I assist you today?',
-            timestamp: Date.now(),
-        }
+            id: "welcome",
+            text: "Welcome to the Grand Hotel! 🏨 I'm your AI Concierge. How can I help you?",
+            isUser: false,
+        },
     ]);
-    const [input, setInput] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [isRecording, setIsRecording] = useState(false);
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const audioChunksRef = useRef<Blob[]>([]);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const [input, setInput] = useState("");
+    const [isListening, setIsListening] = useState(false);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [isThinking, setIsThinking] = useState(false);
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+    // Auto-scroll
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [messages, isThinking]);
+
+    // Mascot Status Logic
+    const getMascotStatus = (): MascotStatus => {
+        if (isPlaying) return "talking";
+        if (isListening || isThinking) return "listening";
+        return "idle";
     };
 
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
+    // --- AUDIO LOGIC ---
+    const playAudio = (base64Audio: string) => {
+        if (audioRef.current) {
+            audioRef.current.pause(); // Stop previous
+        }
+        const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
+        audioRef.current = audio;
+
+        audio.onplay = () => setIsPlaying(true);
+        audio.onended = () => setIsPlaying(false);
+        audio.play().catch(e => console.error("Playback error:", e));
+    };
 
     const startRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const mediaRecorder = new MediaRecorder(stream);
-            mediaRecorderRef.current = mediaRecorder;
-            audioChunksRef.current = [];
+            const recorder = new MediaRecorder(stream);
+            const chunks: Blob[] = [];
 
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    audioChunksRef.current.push(event.data);
-                }
-            };
-
-            mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+            recorder.ondataavailable = (e) => chunks.push(e.data);
+            recorder.onstop = async () => {
+                const blob = new Blob(chunks, { type: 'audio/wav' });
                 const reader = new FileReader();
-                reader.readAsDataURL(audioBlob);
-                reader.onloadend = async () => {
-                    const base64Audio = (reader.result as string).split(',')[1];
-                    await sendAudio(base64Audio);
+                reader.readAsDataURL(blob);
+                reader.onloadend = () => {
+                    const base64 = (reader.result as string).split(',')[1];
+                    handleSend(base64, true); // Send as Audio
                 };
-                stream.getTracks().forEach(track => track.stop());
             };
 
-            mediaRecorder.start();
-            setIsRecording(true);
+            recorder.start();
+            mediaRecorderRef.current = recorder;
+            setIsListening(true);
         } catch (err) {
-            console.error("Mic Access Error:", err);
-            alert("Microphone access denied.");
+            console.error("Mic error:", err);
+            alert("Microphone access denied!");
         }
     };
 
     const stopRecording = () => {
-        if (mediaRecorderRef.current && isRecording) {
+        if (mediaRecorderRef.current && isListening) {
             mediaRecorderRef.current.stop();
-            setIsRecording(false);
+            setIsListening(false);
         }
     };
 
-    const sendAudio = async (base64Audio: string) => {
-        const userMsg: Message = {
-            id: Date.now().toString(),
-            role: 'user',
-            text: '🎤 Audio Message',
-            timestamp: Date.now(),
-        };
-        setMessages(prev => [...prev, userMsg]);
-        setLoading(true);
+    // --- SEND LOGIC ---
+    const handleSend = async (content: string, isAudio = false) => {
+        if (!content.trim()) return;
+
+        if (!isAudio) {
+            const userMsg: Message = { id: Date.now().toString(), text: content, isUser: true, isNew: true };
+            setMessages(prev => [...prev, userMsg]);
+            setInput("");
+        }
+
+        setIsThinking(true);
 
         try {
+            const payload = isAudio ? { audio: content } : { text: content };
+
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ audio: base64Audio }),
+                body: JSON.stringify(payload)
             });
+
             const data = await res.json();
 
-            // Handle Text
-            const brainMsg: Message = {
+            // Handle AI Response
+            const aiMsg: Message = {
                 id: (Date.now() + 1).toString(),
-                role: 'brain',
-                text: data.text || "I didn't quite catch that.",
-                timestamp: Date.now(),
+                text: data.text || "I'm not sure what you mean.",
+                isUser: false,
+                isNew: true
             };
-            setMessages(prev => [...prev, brainMsg]);
+            setMessages(prev => [...prev, aiMsg]);
 
-            // Handle Audio
-            if (data.audio) {
-                const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
-                audio.play().catch(e => console.error("Playback failed", e));
+            // If Voice Response, Play it!
+            if (data.type === 'TTS_AUDIO' && data.audio) {
+                playAudio(data.audio);
             }
 
-        } catch (err) {
-            console.error(err);
-            const errorMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'brain',
-                text: "System Offline.",
-                timestamp: Date.now(),
-            };
-            setMessages(prev => [...prev, errorMsg]);
+        } catch (error) {
+            console.error("API Error:", error);
+            setMessages(prev => [...prev, { id: "error", text: "Connection Error 🔌", isUser: false }]);
         } finally {
-            setLoading(false);
+            setIsThinking(false);
         }
-    };
-
-    // Helper for Text Submit reuse
-    const handleTextSubmit = async () => {
-        if (!input.trim() || loading) return;
-
-        const userMsg: Message = {
-            id: Date.now().toString(),
-            role: 'user',
-            text: input,
-            timestamp: Date.now(),
-        };
-
-        setMessages(prev => [...prev, userMsg]);
-        setInput('');
-        setLoading(true);
-
-        try {
-            const res = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: userMsg.text }),
-            });
-            const data = await res.json();
-
-            const brainMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'brain',
-                text: data.text || "I didn't quite catch that.",
-                timestamp: Date.now(),
-            };
-            setMessages(prev => [...prev, brainMsg]);
-
-            // Should not expect audio from text request current flow, but if we updated main.py correctly:
-            // Text request -> PROCESS_TEXT -> ASSISTANT_TEXT (No Audio). 
-            // Audio request -> PROCESS_AUDIO -> TTS_AUDIO (With Audio).
-            // So logic holds.
-
-        } catch (err) {
-            console.error(err);
-            const errorMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'brain',
-                text: "System Offline.",
-                timestamp: Date.now(),
-            };
-            setMessages(prev => [...prev, errorMsg]);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        handleTextSubmit();
     };
 
     return (
-        <main className="flex-1 flex flex-col max-w-4xl mx-auto w-full p-4">
-            {/* Header */}
-            <header className="mb-6 p-4 border-b border-slate-700 flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                    <Bot className="text-white w-6 h-6" />
-                </div>
-                <div>
-                    <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
-                        Grand Budapest Hotel
-                    </h1>
-                    <p className="text-xs text-slate-400 tracking-wider uppercase">Autonomous Concierge</p>
-                </div>
-            </header>
+        <div className="min-h-screen bg-pokedex-red flex items-center justify-center p-4 font-sans">
 
-            {/* Chat Area */}
-            <div className="flex-1 overflow-y-auto mb-4 space-y-4 px-2 custom-scrollbar">
-                <AnimatePresence initial={false}>
-                    {messages.map((msg) => (
-                        <motion.div
-                            key={msg.id}
-                            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            transition={{ duration: 0.3 }}
-                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                        >
-                            <div
-                                className={`max-w-[80%] p-4 rounded-2xl shadow-md backdrop-blur-sm ${msg.role === 'user'
-                                    ? 'bg-indigo-600 text-white rounded-tr-none'
-                                    : 'bg-slate-800 border border-slate-700 text-slate-100 rounded-tl-none'
-                                    }`}
-                            >
-                                <p className="text-sm md:text-base leading-relaxed">{msg.text}</p>
-                                <span className="text-[10px] opacity-50 mt-1 block text-right">
-                                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </span>
-                            </div>
-                        </motion.div>
-                    ))}
-                    {loading && (
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            className="flex justify-start"
-                        >
-                            <div className="bg-slate-800/50 p-3 rounded-2xl rounded-tl-none flex gap-1 items-center">
-                                <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                            </div>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-                <div ref={messagesEndRef} />
-            </div>
+            {/* Pokedex Case */}
+            <div className="w-full max-w-md bg-pokedex-red-dark rounded-3xl p-4 shadow-2xl border-b-8 border-r-8 border-black/20">
 
-            {/* Input Area */}
-            <form onSubmit={handleSubmit} className="relative mt-auto">
-                <div className="relative group">
-                    <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-cyan-500 rounded-xl blur opacity-30 group-hover:opacity-75 transition duration-500"></div>
-                    <div className="relative flex bg-slate-900 rounded-xl p-1 items-center gap-2">
+                {/* Top LEDs */}
+                <div className="flex gap-2 mb-4">
+                    <div className="w-12 h-12 rounded-full bg-blue-400 border-4 border-white shadow-lg animate-pulse" />
+                    <div className="w-4 h-4 rounded-full bg-red-400 border-2 border-white" />
+                    <div className="w-4 h-4 rounded-full bg-yellow-400 border-2 border-white" />
+                    <div className="w-4 h-4 rounded-full bg-green-400 border-2 border-white" />
+                </div>
+
+                {/* Screen Bezel */}
+                <div className="bg-gray-200 rounded-b-xl rounded-tl-none rounded-tr-3xl p-6 pt-8 pb-4 relative clip-path-custom">
+
+                    {/* The Green Screen */}
+                    <div className="bg-screen-green rounded-xl border-4 border-gray-400 shadow-inner overflow-hidden flex flex-col h-[500px]">
+
+                        {/* Mascot Area */}
+                        <div className="bg-screen-green-dark/20 p-4 border-b-2 border-screen-green-dark/30 flex justify-center">
+                            <Mascot status={getMascotStatus()} />
+                        </div>
+
+                        {/* Chat History */}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-2 pokedex-scroll">
+                            {messages.map((m) => (
+                                <ChatBubble key={m.id} message={m.text} isUser={m.isUser} />
+                            ))}
+                            {isThinking && <div className="text-xs text-center text-screen-green-dark font-pixel animate-pulse">THINKING...</div>}
+                            <div ref={messagesEndRef} />
+                        </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="mt-4 flex gap-2">
                         <button
-                            type="button"
                             onMouseDown={startRecording}
                             onMouseUp={stopRecording}
-                            onMouseLeave={stopRecording}
                             onTouchStart={startRecording}
                             onTouchEnd={stopRecording}
-                            disabled={loading}
-                            className={`p-3 rounded-lg transition-colors text-white ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-slate-700 hover:bg-slate-600'}`}
+                            className={`p-4 rounded-full border-4 border-black transition-all ${isListening ? "bg-red-500 scale-95" : "bg-gray-800 hover:bg-gray-700"}`}
                         >
-                            <span className="text-xl">🎤</span>
+                            {isListening ? <MicOff className="text-white w-6 h-6" /> : <Mic className="text-white w-6 h-6" />}
                         </button>
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            placeholder="Ask me anything..."
-                            className="flex-1 bg-transparent px-4 py-3 text-slate-100 focus:outline-none placeholder:text-slate-500"
-                            autoFocus
-                        />
+
+                        <div className="flex-1 bg-gray-800 rounded-full border-4 border-black flex items-center px-4">
+                            <input
+                                className="bg-transparent text-white w-full focus:outline-none font-friendly"
+                                placeholder="Ask anything..."
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSend(input)}
+                            />
+                        </div>
+
                         <button
-                            type="submit"
-                            disabled={!input.trim() || loading}
-                            className="p-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 rounded-lg transition-colors text-white"
+                            onClick={() => handleSend(input)}
+                            className="p-4 bg-yellow-400 rounded-full border-4 border-black hover:bg-yellow-300"
                         >
-                            <Send className="w-5 h-5" />
+                            <Send className="text-black w-6 h-6" />
                         </button>
                     </div>
+
                 </div>
-                <p className="text-center text-xs text-slate-500 mt-2">
-                    Hold Mic to speak • AI checks rooms & bookings
-                </p>
-            </form>
-        </main>
+            </div>
+        </div>
     );
 }

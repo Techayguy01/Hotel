@@ -5,6 +5,7 @@ import * as path from 'path';
 @Injectable()
 export class BrainService implements OnModuleInit, OnModuleDestroy {
     private pythonProcess: ChildProcessWithoutNullStreams;
+    private buffer = ''; // <--- NEW: Buffer to store incomplete data chunks
 
     onModuleInit() {
         this.spawnBrain();
@@ -18,24 +19,38 @@ export class BrainService implements OnModuleInit, OnModuleDestroy {
 
     private spawnBrain() {
         const scriptPath = path.resolve(__dirname, '../../../brain/main.py');
-        // Use the virtual environment Python
-        const venvPython = path.resolve(__dirname, '../../../../.venv/Scripts/python.exe');
-        console.log(`[BrainService] Spawning Python Brain using: ${venvPython} at ${scriptPath}`);
+        const venvPython = path.resolve(__dirname, '../../../../.venv/Scripts/python.exe'); // Ensure path is correct for your OS
+        console.log(`[BrainService] Spawning Python Brain using: ${venvPython}`);
 
         this.pythonProcess = spawn(venvPython, [scriptPath]);
 
         this.pythonProcess.stdout.on('data', (data) => {
-            const lines = data.toString().split('\n');
-            lines.forEach(line => {
-                if (line.trim()) {
-                    try {
-                        const json = JSON.parse(line);
-                        this.handleBrainMessage(json);
-                    } catch (e) {
-                        console.error(`[BrainService] Failed to parse brain output: ${line}`, e);
+            // 1. Append new data to the buffer
+            this.buffer += data.toString();
+
+            // 2. Process complete lines only
+            if (this.buffer.includes('\n')) {
+                const lines = this.buffer.split('\n');
+                
+                // Save the last piece (it might be incomplete) back to the buffer
+                this.buffer = lines.pop() || ''; 
+
+                lines.forEach(line => {
+                    if (line.trim()) {
+                        try {
+                            const json = JSON.parse(line);
+                            this.handleBrainMessage(json);
+                        } catch (e) {
+                            // Only log if it's not a tiny fragment
+                            if (line.length < 1000) { 
+                                console.error(`[BrainService] JSON Parse Error: ${line}`, e);
+                            } else {
+                                console.error(`[BrainService] JSON Parse Error (Large Payload)`);
+                            }
+                        }
                     }
-                }
-            });
+                });
+            }
         });
 
         this.pythonProcess.stderr.on('data', (data) => {
@@ -47,6 +62,7 @@ export class BrainService implements OnModuleInit, OnModuleDestroy {
         });
     }
 
+    // --- Message Handling (No Changes Needed Below) ---
     private pendingRequests = new Map<string, (response: any) => void>();
 
     async sendPayload(payload: any): Promise<any> {
@@ -71,7 +87,6 @@ export class BrainService implements OnModuleInit, OnModuleDestroy {
         return this.sendPayload({ type: 'PROCESS_TEXT', text, timestamp: Date.now() });
     }
 
-    // Simple event emitter replacement for dependency-free
     private listeners: ((msg: any) => void)[] = [];
     private addListener(fn: (msg: any) => void) {
         this.listeners.push(fn);
@@ -80,7 +95,6 @@ export class BrainService implements OnModuleInit, OnModuleDestroy {
         this.listeners = this.listeners.filter(l => l !== fn);
     }
     private handleBrainMessage(msg: any) {
-        // Broadcast to all waiting (FIFO in real app, but here simple)
         const listener = this.listeners.shift();
         if (listener) listener(msg);
     }
