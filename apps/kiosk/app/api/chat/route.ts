@@ -3,8 +3,9 @@ import { NextResponse } from 'next/server';
 export async function POST(req: Request) {
     try {
         const body = await req.json();
-        
+
         // Proxy to Manager Service
+        // Just proxy the whole body (text, audio, OR image)
         const res = await fetch('http://localhost:3001/api/chat', {
             method: 'POST',
             headers: {

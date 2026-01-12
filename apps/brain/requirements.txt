@@ -5,3 +5,9 @@ python-dotenv
 deepgram-sdk
 edge-tts
 nest_asyncio
+langchain-community
+sentence-transformers
+chromadb
+pypdf
+langchain-huggingface
+langchain-chroma

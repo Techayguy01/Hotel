@@ -11,6 +11,7 @@ import nest_asyncio
 from dotenv import load_dotenv
 from deepgram import DeepgramClient
 import edge_tts
+from apps.brain.vision import scan_id_card
 
 from apps.brain.agent import Agent
 
@@ -127,6 +128,30 @@ def main():
                         response = loop.run_until_complete(process_audio_flow(agent, audio_b64))
                     else:
                         response = {"type": "ERROR", "text": "Agent offline"}
+                        
+                    print(json.dumps(response), flush=True)
+
+                elif msg_type == "PROCESS_IMAGE":
+                    image_b64 = data.get("image", "")
+                    logging.info(f"Processing ID Scan...")
+                    
+                    # 1. Scan the Image
+                    extracted_text = scan_id_card(image_b64)
+                    logging.info(f"OCR Result: {extracted_text}")
+                    
+                    if not extracted_text.strip():
+                        logging.warning("OCR failed to extract text.")
+                        response = {"type": "ASSISTANT_TEXT", "text": "I couldn't read the ID. Please hold it steady and try again."}
+                    else:
+                        # 2. Ask the Agent to Verify
+                        # We inject the OCR text into the chat context so the LLM can decide
+                        prompt = f"SYSTEM: A guest just scanned their ID. The OCR text read: '{extracted_text}'. If this contains a name, welcome the guest by name and confirm check-in. If it's unclear, ask them to retry."
+                        
+                        if agent:
+                            reply = agent.process_message(prompt)
+                            response = {"type": "ASSISTANT_TEXT", "text": reply}
+                        else:
+                            response = {"type": "ERROR", "text": "Agent offline"}
                         
                     print(json.dumps(response), flush=True)
 

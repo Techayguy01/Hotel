@@ -2,6 +2,7 @@ import sqlite3
 import os
 import logging
 
+# Define path relative to this script
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'hotel.db')
 
 class Database:
@@ -14,23 +15,21 @@ class Database:
 
     def _initialize(self):
         """Initialize database schema and seed data if empty."""
+        # Ensure data directory exists
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        
         conn = self._get_conn()
         cursor = conn.cursor()
 
         # Create Tables
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS hotels (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL
-            )
-        ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS rooms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 number TEXT NOT NULL UNIQUE,
                 type TEXT DEFAULT 'STANDARD',
                 status TEXT DEFAULT 'AVAILABLE',
-                price REAL DEFAULT 100.0
+                price REAL DEFAULT 100.0,
+                description TEXT
             )
         ''')
         cursor.execute('''
@@ -43,22 +42,25 @@ class Database:
         ''')
         conn.commit()
 
-        # Seed Data if hotels table is empty
-        cursor.execute('SELECT count(*) FROM hotels')
+        # Seed Data if table is empty
+        cursor.execute('SELECT count(*) FROM rooms')
         if cursor.fetchone()[0] == 0:
-            logging.info("Seeding database...")
-            cursor.execute("INSERT INTO hotels (name) VALUES ('Grand Budapest')")
+            logging.info("Seeding database with Rich Content...")
             
-            # Rooms 101-105
+            # Room Data: (Number, Status, Price, Description)
             rooms = [
-                ('101', 'AVAILABLE'),
-                ('102', 'AVAILABLE'),
-                ('103', 'OCCUPIED'),
-                ('104', 'AVAILABLE'),
-                ('105', 'AVAILABLE')
+                ('101', 'AVAILABLE', 150.0, "The Alpine Suite: Features a balcony with a view of the snowy peaks, vintage oak furniture, and a complimentary bottle of sparkling water."),
+                ('102', 'AVAILABLE', 120.0, "The Mendl's Room: Decorated in pastel pinks and creams. Comes with a box of fresh pastries delivered every morning."),
+                ('103', 'OCCUPIED', 200.0, "The Society Room: Dark wood paneling, velvet armchairs, and a secret bookshelf that opens... well, we shouldn't say."),
+                ('104', 'AVAILABLE', 100.0, "The Courtyard Standard: A quiet, cozy room facing the inner garden. Perfect for writers and poets."),
+                ('105', 'AVAILABLE', 300.0, "The Grand Royal: Our finest suite. Four-poster bed, crystal chandelier, and a private bath with gold-plated fixtures.")
             ]
-            for num, status in rooms:
-                cursor.execute("INSERT INTO rooms (number, status) VALUES (?, ?)", (num, status))
+            
+            for num, status, price, desc in rooms:
+                cursor.execute(
+                    "INSERT INTO rooms (number, status, price, description) VALUES (?, ?, ?, ?)", 
+                    (num, status, price, desc)
+                )
             
             conn.commit()
             logging.info("Database seeded.")
@@ -66,13 +68,31 @@ class Database:
         conn.close()
 
     def check_availability(self):
-        """Return list of available room numbers."""
+        """Return list of available room numbers with basic info."""
         conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("SELECT number, type, price FROM rooms WHERE status = 'AVAILABLE'")
         rooms = [{'number': r[0], 'type': r[1], 'price': r[2]} for r in cursor.fetchall()]
         conn.close()
         return rooms
+
+    def get_room_details(self, room_number):
+        """Get the full description of a specific room."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT number, type, price, description, status FROM rooms WHERE number = ?", (room_number,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "number": row[0],
+                "type": row[1],
+                "price": row[2],
+                "description": row[3],
+                "status": row[4]
+            }
+        return None
 
     def book_room(self, room_number, guest_name):
         """Book a room for a guest."""
@@ -101,20 +121,3 @@ class Database:
             return False, str(e)
         finally:
             conn.close()
-
-if __name__ == "__main__":
-    # Test script
-    print(f"Initializing database at {DB_PATH}")
-    db = Database()
-    
-    print("Checking availability:")
-    available = db.check_availability()
-    print(available)
-    
-    print("\nBooking Room 101 for Alice:")
-    success, msg = db.book_room('101', 'Alice')
-    print(f"{success}: {msg}")
-    
-    print("\nChecking availability again:")
-    available = db.check_availability()
-    print(available)

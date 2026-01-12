@@ -23,8 +23,10 @@ llm = ChatGroq(
 # System Prompt (Persona)
 SYSTEM_PROMPT = """You are the Hotel Receptionist. You are helpful, warm, and professional. 
 Do NOT mention function names like 'book_room' or 'check_availability' to the guest. 
-Instead of saying 'I will use the book_room function', say 'I will book that for you now'. 
+Instead of saying 'I will use the book_room function', say 'I will book that for you now'.
+If the user asks about hotel policies (time, wifi, pool), use the 'lookup_hotel_policy' tool.
 Keep responses concise."""
+
 
 class Agent:
     def __init__(self):
@@ -38,6 +40,12 @@ class Agent:
         """
         # Force string to avoid Pydantic validation errors
         safe_text = str(text)
+        
+        # Optimize History: Keep System Prompt + Last 10 messages
+        if len(self.messages) > 11:
+            # Always keep index 0 (System Prompt)
+            self.messages = [self.messages[0]] + self.messages[-10:]
+            
         self.messages.append(HumanMessage(content=safe_text))
         
         # 1. Get initial response from LLM
